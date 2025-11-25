@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>로런츠 힘 3D 시뮬레이션</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a1a; font-family: 'Noto Sans KR', sans-serif; }
+        #info-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 320px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            z-index: 100;
+        }
+        #readout-panel {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #444;
+            z-index: 100;
+            text-align: right;
+            min-width: 200px;
+        }
+        /* New Orbit Info Panel */
+        #orbit-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.85); /* Dark background */
+            color: #fbbf24; /* Amber text */
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px solid #fbbf24;
+            z-index: 100;
+            min-width: 220px;
+            display: none; /* Hidden by default */
+            box-shadow: 0 0 15px rgba(251, 191, 36, 0.3);
+            backdrop-filter: blur(4px);
+        }
+        .slider-container { margin-bottom: 12px; }
+        .slider-label { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 4px; font-size: 0.9rem; }
+        input[type=range] { width: 100%; cursor: pointer; accent-color: #4f46e5; }
+        .legend-item { display: flex; align-items: center; margin-bottom: 4px; font-size: 0.8rem; }
+        .dot { width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; display: inline-block; }
+        
+        /* Button Styles */
+        .btn-group { display: flex; gap: 8px; margin-top: 15px; }
+        .btn { flex: 1; padding: 8px; border-radius: 6px; font-weight: bold; font-size: 0.9rem; cursor: pointer; transition: all 0.2s; color: white; border: none; }
+        .btn-start { background-color: #10b981; } /* Green */
+        .btn-start:hover { background-color: #059669; }
+        .btn-pause { background-color: #f59e0b; } /* Amber */
+        .btn-pause:hover { background-color: #d97706; }
+        .btn-reset { background-color: #ef4444; } /* Red */
+        .btn-reset:hover { background-color: #dc2626; }
+    </style>
+</head>
+<body>
+
+    <!-- Control Panel -->
+    <div id="info-panel">
+        <h2 class="text-xl font-bold mb-4 text-gray-800 border-b pb-2">실험 제어판</h2>
+        
+        <div class="slider-container">
+            <div class="slider-label">
+                <span>전하량 (q)</span>
+                <span id="val-q" class="text-blue-600">+1.0 C</span>
+            </div>
+            <input type="range" id="slider-q" min="-5" max="5" step="1" value="1">
+        </div>
+
+        <div class="slider-container">
+            <div class="slider-label">
+                <span>속도 크기 (v)</span>
+                <span id="val-v" class="text-red-600">2.0 m/s</span>
+            </div>
+            <input type="range" id="slider-v" min="0" max="5" step="0.1" value="2.0">
+        </div>
+
+        <div class="slider-container">
+            <div class="slider-label">
+                <span>자기장 세기 (B)</span>
+                <span id="val-b" class="text-green-600">2.0 T</span>
+            </div>
+            <input type="range" id="slider-b" min="0" max="5" step="0.1" value="2">
+        </div>
+
+        <div class="slider-container">
+            <div class="slider-label">
+                <span>입사 각도 (θ)</span>
+                <span id="val-angle" class="text-gray-700">90°</span>
+            </div>
+            <input type="range" id="slider-angle" min="0" max="180" step="1" value="90">
+            <p class="text-xs text-gray-500 mt-1">* 자기장(초록)에 대한 각도</p>
+        </div>
+
+        <!-- Buttons -->
+        <div class="btn-group">
+            <button id="btn-start" class="btn btn-start"><i class="fas fa-play"></i> 시작</button>
+            <button id="btn-pause" class="btn btn-pause"><i class="fas fa-pause"></i> 일시정지</button>
+            <button id="btn-reset" class="btn btn-reset"><i class="fas fa-undo"></i> 초기화</button>
+        </div>
+
+        <div class="mt-4 pt-4 border-t border-gray-300">
+            <h3 class="font-bold text-sm mb-2 text-gray-600">범례</h3>
+            <div class="legend-item"><span class="dot bg-red-500"></span> 속도 (v)</div>
+            <div class="legend-item"><span class="dot bg-green-500"></span> 자기장 (B)</div>
+            <div class="legend-item"><span class="dot bg-yellow-400"></span> 로런츠 힘 (F<sub>B</sub>)</div>
+        </div>
+    </div>
+
+    <!-- Orbit Info Panel (Visible only at 90 deg) -->
+    <div id="orbit-panel">
+        <h3 class="font-bold text-lg mb-3 border-b border-yellow-600 pb-1 flex items-center gap-2">
+            <i class="fas fa-circle-notch animate-spin-slow"></i> 원운동 정보 (θ=90°)
+        </h3>
+        <div class="space-y-2">
+            <div class="flex justify-between">
+                <span class="text-gray-300">반지름 (r):</span>
+                <span id="val-radius" class="font-bold text-white text-lg">0.00 m</span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-300">주기 (T):</span>
+                <span id="val-period" class="font-bold text-white text-lg">0.00 s</span>
+            </div>
+        </div>
+        <p class="text-xs text-gray-400 mt-3 text-right italic">
+            * 질량 m=1로 가정
+        </p>
+    </div>
+
+    <!-- Data Readout -->
+    <div id="readout-panel">
+        <h3 class="text-lg font-bold text-yellow-400 mb-2">로런츠 힘 (F)</h3>
+        <div class="text-3xl font-mono font-black mb-1" id="force-display">0.00 N</div>
+    </div>
+
+    <script>
+        // --- 1. Scene Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a1a);
+        // Add subtle grid
+        const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+        scene.add(gridHelper);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(10, 8, 10); // Look from an angle
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(5, 10, 7);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // --- 2. Physics & State ---
+        const state = {
+            q: 1,       // Charge
+            b: 2,       // Magnetic Field Strength
+            vMag: 2,    // Velocity magnitude
+            angle: 90,  // Angle in degrees
+            pos: new THREE.Vector3(0, 0, 0),
+            vel: new THREE.Vector3(0, 0, 0),
+            isPlaying: false
+        };
+
+        let particlePath = [];
+        const MAX_PATH_POINTS = 600;
+
+        // --- 3. Objects ---
+        
+        // Particle
+        const particleGeometry = new THREE.SphereGeometry(0.3, 32, 32);
+        const particleMaterial = new THREE.MeshPhongMaterial({ color: 0xff3333 });
+        const particle = new THREE.Mesh(particleGeometry, particleMaterial);
+        particle.castShadow = true;
+        scene.add(particle);
+
+        // Trail Line
+        const trailGeometry = new THREE.BufferGeometry();
+        const trailMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, opacity: 0.5, transparent: true });
+        const trail = new THREE.Line(trailGeometry, trailMaterial);
+        scene.add(trail);
+
+        // Field Arrows Group
+        const fieldGroup = new THREE.Group();
+        scene.add(fieldGroup);
+
+        function createFieldLines() {
+            fieldGroup.clear();
+            const arrowLen = 1;
+            const arrowCol = 0x00ff00; // Green for B-field
+            // Create a 3D grid of faint arrows
+            for(let x = -5; x <= 5; x+=2.5) {
+                for(let z = -5; z <= 5; z+=2.5) {
+                    for(let y = -2; y <= 2; y+=4) {
+                        const dir = new THREE.Vector3(0, 1, 0); // B is always UP (Y-axis)
+                        const origin = new THREE.Vector3(x, y, z);
+                        const arrow = new THREE.ArrowHelper(dir, origin, arrowLen, arrowCol, 0.3, 0.2);
+                        // Make them subtle
+                        arrow.line.material.opacity = 0.2;
+                        arrow.line.material.transparent = true;
+                        arrow.cone.material.opacity = 0.2;
+                        arrow.cone.material.transparent = true;
+                        fieldGroup.add(arrow);
+                    }
+                }
+            }
+        }
+        createFieldLines();
+
+        // Standard ArrowHelpers
+        // Velocity (Red)
+        // ArrowHelper(dir, origin, length, hex, headLength, headWidth)
+        const velArrow = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), 1, 0xff0000, 0.5, 0.3);
+        scene.add(velArrow);
+        
+        // Force (Yellow)
+        const forceArrow = new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), 1, 0xffff00, 0.5, 0.3);
+        scene.add(forceArrow);
+
+        // --- 4. Logic Functions ---
+
+        function initParticle() {
+            state.pos.set(-3, 0, 0); // Start from left
+            particlePath = [];
+            
+            updateVelocityVector();
+            
+            // Clear trail
+            trailGeometry.setFromPoints([]);
+            
+            // Update visual positions immediately
+            particle.position.copy(state.pos);
+            updateArrows(new THREE.Vector3(0,0,0)); // Force 0 initially or calc?
+            
+            // Calculate initial force for visualization even before play
+            const B_vec = new THREE.Vector3(0, state.b, 0);
+            const cross = new THREE.Vector3().copy(state.vel).cross(B_vec);
+            const force = cross.multiplyScalar(state.q);
+            updateArrows(force);
+        }
+
+        function updateVelocityVector() {
+            const rad = state.angle * Math.PI / 180;
+            state.vel.set(
+                Math.sin(rad) * state.vMag,
+                Math.cos(rad) * state.vMag,
+                0
+            );
+        }
+
+        function updateArrows(force) {
+            // 1. Color of particle based on charge
+            if (state.q > 0) particle.material.color.setHex(0xff3333); 
+            else if (state.q < 0) particle.material.color.setHex(0x3333ff); 
+            else particle.material.color.setHex(0xaaaaaa); 
+
+            // 2. Velocity Arrow
+            const vLen = state.vel.length();
+            velArrow.position.copy(state.pos);
+            if (vLen > 0.01) {
+                velArrow.setDirection(state.vel.clone().normalize());
+                // setLength(length, headLength, headWidth)
+                // Increase head size for visibility
+                velArrow.setLength(vLen * 0.8, 0.4, 0.3); 
+                velArrow.visible = true;
+            } else {
+                velArrow.visible = false;
+            }
+
+            // 3. Force Arrow
+            const fLen = force.length();
+            forceArrow.position.copy(state.pos);
+            if (fLen > 0.01) {
+                forceArrow.setDirection(force.clone().normalize());
+                // Increase head size for visibility
+                forceArrow.setLength(fLen * 0.3, 0.4, 0.3);
+                forceArrow.visible = true;
+            } else {
+                forceArrow.visible = false;
+            }
+
+            // 4. Update Readout
+            document.getElementById('force-display').innerText = fLen.toFixed(2) + " N";
+        }
+
+        function updatePhysics(dt) {
+            const B_vec = new THREE.Vector3(0, state.b, 0);
+            
+            // Cross product: v x B
+            const cross = new THREE.Vector3().copy(state.vel).cross(B_vec);
+            const force = cross.multiplyScalar(state.q);
+
+            const acceleration = force.clone(); // mass = 1
+
+            state.vel.add(acceleration.clone().multiplyScalar(dt));
+
+            if (state.vel.length() > 0.001) {
+                state.vel.setLength(state.vMag); 
+            }
+
+            state.pos.add(state.vel.clone().multiplyScalar(dt));
+            particle.position.copy(state.pos);
+
+            updateArrows(force);
+
+            // Update Trail
+            particlePath.push(state.pos.clone());
+            if (particlePath.length > MAX_PATH_POINTS) particlePath.shift();
+            trailGeometry.setFromPoints(particlePath);
+        }
+
+        // --- 5. UI Event Listeners ---
+        const sliderQ = document.getElementById('slider-q');
+        const sliderV = document.getElementById('slider-v');
+        const sliderB = document.getElementById('slider-b');
+        const sliderAngle = document.getElementById('slider-angle');
+        
+        const btnStart = document.getElementById('btn-start');
+        const btnPause = document.getElementById('btn-pause');
+        const btnReset = document.getElementById('btn-reset');
+
+        const valQ = document.getElementById('val-q');
+        const valV = document.getElementById('val-v');
+        const valB = document.getElementById('val-b');
+        const valAngle = document.getElementById('val-angle');
+        
+        // Elements for Orbit Info
+        const orbitPanel = document.getElementById('orbit-panel');
+        const valRadius = document.getElementById('val-radius');
+        const valPeriod = document.getElementById('val-period');
+
+        function updateValues() {
+            state.q = parseFloat(sliderQ.value);
+            state.vMag = parseFloat(sliderV.value);
+            state.b = parseFloat(sliderB.value);
+            state.angle = parseFloat(sliderAngle.value); // Ensure this is up to date
+            
+            valQ.innerText = (state.q > 0 ? "+" : "") + state.q + " C";
+            valV.innerText = state.vMag.toFixed(1) + " m/s";
+            valB.innerText = state.b + " T";
+            valAngle.innerText = sliderAngle.value + "°";
+            
+            // --- Update Orbit Info Panel Logic ---
+            if (state.angle === 90) {
+                orbitPanel.style.display = 'block';
+                
+                const m = 1; // Mass assumed 1
+                const qAbs = Math.abs(state.q);
+                const B = state.b;
+                const v = state.vMag;
+                
+                let rStr = "∞";
+                let tStr = "∞";
+                
+                // r = mv / qB
+                // T = 2*pi*m / qB
+                
+                if (qAbs > 0 && B > 0) {
+                    const r = (m * v) / (qAbs * B);
+                    const T = (2 * Math.PI * m) / (qAbs * B);
+                    rStr = r.toFixed(2);
+                    tStr = T.toFixed(2);
+                } else if (qAbs === 0 || B === 0) {
+                     // Infinite radius
+                }
+                
+                valRadius.innerText = rStr + " m";
+                valPeriod.innerText = tStr + " s";
+            } else {
+                orbitPanel.style.display = 'none';
+            }
+        }
+
+        // Sliders
+        sliderQ.addEventListener('input', () => {
+            updateValues();
+            if (!state.isPlaying) {
+                 const B_vec = new THREE.Vector3(0, state.b, 0);
+                 const cross = new THREE.Vector3().copy(state.vel).cross(B_vec);
+                 const force = cross.multiplyScalar(state.q);
+                 updateArrows(force);
+            }
+        });
+        
+        sliderV.addEventListener('input', () => {
+            updateValues();
+            if (state.vel.length() > 0.0001) {
+                state.vel.setLength(state.vMag);
+            } else {
+                updateVelocityVector();
+            }
+            if (!state.isPlaying) {
+                 const B_vec = new THREE.Vector3(0, state.b, 0);
+                 const cross = new THREE.Vector3().copy(state.vel).cross(B_vec);
+                 const force = cross.multiplyScalar(state.q);
+                 updateArrows(force);
+            }
+        });
+
+        sliderB.addEventListener('input', () => {
+            updateValues();
+             if (!state.isPlaying) {
+                 const B_vec = new THREE.Vector3(0, state.b, 0);
+                 const cross = new THREE.Vector3().copy(state.vel).cross(B_vec);
+                 const force = cross.multiplyScalar(state.q);
+                 updateArrows(force);
+            }
+        });
+        
+        sliderAngle.addEventListener('input', () => {
+            // Logic handled inside updateValues() which is called below
+            // But we need to update Angle state first inside listener before updating values?
+            // Actually updateValues reads from DOM directly, so it's fine.
+            updateValues();
+            initParticle(); 
+            state.isPlaying = false; 
+        });
+
+        // Buttons
+        btnStart.addEventListener('click', () => {
+            state.isPlaying = true;
+        });
+
+        btnPause.addEventListener('click', () => {
+            state.isPlaying = false;
+        });
+
+        btnReset.addEventListener('click', () => {
+            state.isPlaying = false;
+            initParticle();
+        });
+
+        // --- 6. Animation Loop ---
+        initParticle();
+        updateValues();
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const dt = Math.min(clock.getDelta(), 0.1); 
+            
+            if (state.isPlaying && state.vMag > 0) {
+                updatePhysics(dt * 0.8); // Time scale
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+
+    </script>
+</body>
+</html>
